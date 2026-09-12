@@ -15,10 +15,15 @@
 
 /**
  * Trace event types.
+ *
+ * A lookup always produces START then END.  A lookup that no glyph matched
+ * also produces SKIPPED between the two, which is the message vocabulary the
+ * reference trace uses (`start` / `skipped` / `end`).
  */
 enum YuditTraceEvent {
-    YUDIT_TRACE_LOOKUP_START = 0,   /* about to try this lookup */
-    YUDIT_TRACE_LOOKUP_END   = 1,   /* lookup processing done */
+    YUDIT_TRACE_LOOKUP_START   = 0,   /* about to try this lookup */
+    YUDIT_TRACE_LOOKUP_END     = 1,   /* lookup processing done */
+    YUDIT_TRACE_LOOKUP_SKIPPED = 2,   /* no glyph matched this lookup */
 };
 
 /**
