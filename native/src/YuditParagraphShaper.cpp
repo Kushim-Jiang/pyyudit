@@ -463,9 +463,13 @@ yudit_shape_paragraph(SFontLookup* font,
      * origin of the slot it attaches to, plus its GPOS offset.  For an RTL
      * run the glyphs logically *after* a slot are the ones to its left, so
      * the visual origin is measured from the end of the run.
+     *
+     * Reported x is the offset from the pen position, not the step from the
+     * previous glyph: `pen += width` and `draw at pen + x` must reproduce the
+     * position, and for an unpositioned glyph that makes x zero.
      */
     std::vector<ParagraphGlyph> visual(n);
-    int prev_x = 0;
+    int pen_out = 0;
     for (size_t v = 0; v < n; v++) {
         size_t i = rtl ? (n - 1 - v) : v;
         size_t s = (size_t)slot[i];
@@ -474,9 +478,9 @@ yudit_shape_paragraph(SFontLookup* font,
         int y = absy[i];
 
         ParagraphGlyph g = logical[i];
-        g.x = x - prev_x;
+        g.x = x - pen_out;
         g.y = y;
-        prev_x = x;
+        pen_out += adv[i];
         visual[v] = g;
     }
 

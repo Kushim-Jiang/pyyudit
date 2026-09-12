@@ -248,40 +248,6 @@ yudit_font_name(const YuditFont* font) {
     return font->name_val.c_str();
 }
 
-/* ── Glyph snapshot for trace ───────────────────────────────────────────── */
-
-static std::vector<YuditGlyph>
-snapshot_glyphs(const SV_GlyphIndex& gi,
-                const SV_INT& positions,
-                SFontLookup* font,
-                const SS_UCS4* orig_chars,
-                unsigned int count)
-{
-    std::vector<YuditGlyph> result;
-    result.reserve(gi.size());
-
-    for (unsigned int i = 0; i < gi.size(); i++) {
-        YuditGlyph g;
-        g.glyph_id  = gi[i];
-        g.codepoint = (i < count && orig_chars) ? orig_chars[i] : 0;
-
-        if (i < (unsigned int)positions.size()) {
-            int32_t xy = positions[i];
-            g.x = (int16_t)(xy & 0xffff);
-            g.y = (int16_t)((xy >> 16) & 0xffff);
-        } else {
-            g.x = 0;
-            g.y = 0;
-        }
-
-        g.width = font ? font->gwidth(gi[i]) : 0;
-        g.cluster = (int32_t)i;
-
-        result.push_back(g);
-    }
-    return result;
-}
-
 /*
  * OpenType script tag for characters that SScriptProcessor does not claim.
  *
@@ -500,7 +466,6 @@ yudit_shape(const YuditFont* font,
     std::vector<SS_UCS4> all_orig_chars;
     std::vector<SS_GlyphIndex> all_glyphs;
     std::vector<int> all_positions;
-    int total_width = 0;
 
     /* Per-cluster trace: collect all step snapshots across all clusters */
     std::vector<ClusterTrace> all_trace;
@@ -669,7 +634,6 @@ yudit_shape(const YuditFont* font,
             /* Get final results */
             const SV_GlyphIndex& glyphs = sp2.getGlyphs();
             const SV_INT& positions = sp2.getPositions();
-            int width = sp2.getWidth();
             for (unsigned int i = 0; i < glyphs.size(); i++) {
                 all_glyphs.push_back(glyphs[i]);
                 if (i < (unsigned int)positions.size()) {
@@ -678,7 +642,6 @@ yudit_shape(const YuditFont* font,
                     all_positions.push_back(0);
                 }
             }
-            total_width += width;
             pos += consumed;
             continue;
         }
@@ -698,7 +661,6 @@ yudit_shape(const YuditFont* font,
         /* Get final results for this cluster */
         const SV_GlyphIndex& glyphs = sp.getGlyphs();
         const SV_INT& positions = sp.getPositions();
-        int width = sp.getWidth();
 
         for (unsigned int i = 0; i < glyphs.size(); i++) {
             all_glyphs.push_back(glyphs[i]);
@@ -708,36 +670,52 @@ yudit_shape(const YuditFont* font,
                 all_positions.push_back(0);
             }
         }
-        total_width += width;
 
         pos += consumed;
     }
 
-    /* Build final result glyphs */
-    result->width = total_width;
+    /* Build final result glyphs.
+     *
+     * Yudit records an absolute pen position for every glyph plus a y offset
+     * for marks.  The reference trace format wants the offset from the pen
+     * position instead, so `pen += ax` and `draw at pen + dx` reproduce the
+     * layout: dx is measured against the accumulated advance, not against the
+     * previous glyph's absolute x.
+     *
+     * The advance is the magnitude of Yudit's width.  gwidth() returns a
+     * negative number for glyphs with a negative left side bearing, which is
+     * Yudit's marker for "align to the end of the previous character"; its own
+     * positioning code takes the magnitude before advancing by it.
+     */
     result->glyphs.reserve(all_glyphs.size());
-    int prev_x = 0;
+    int pen = 0;
     for (unsigned int i = 0; i < all_glyphs.size(); i++) {
         YuditGlyph g;
         g.glyph_id  = all_glyphs[i];
         g.codepoint = (i < all_orig_chars.size()) ? all_orig_chars[i] : 0;
 
+        int w = flookup->gwidth(all_glyphs[i]);
+        g.width = (w < 0) ? -w : w;
+
         if (i < all_positions.size()) {
             int32_t xy = all_positions[i];
-            int abs_x = (int16_t)(xy & 0xffff);
+            int abs_x  = (int16_t)(xy & 0xffff);
             int mark_y = (int16_t)((xy >> 16) & 0xffff);
-            g.x = abs_x - prev_x;  /* relative dx */
-            g.y = mark_y;           /* mark-to-base dy */
-            prev_x = abs_x;
+            g.x = abs_x - pen;   /* offset from the pen position */
+            g.y = mark_y;        /* mark-to-base offset */
         } else {
             g.x = 0;
             g.y = 0;
         }
 
-        g.width = flookup->gwidth(all_glyphs[i]);
         g.cluster = (int32_t)i;
+        pen += g.width;
         result->glyphs.push_back(g);
     }
+
+    /* The run's advance is the sum of the reported advances, so a consumer
+     * that adds them up gets the same number. */
+    result->width = pen;
 
     /* Final snapshot */
     {

@@ -73,24 +73,30 @@ YuditScriptProcessor::snapshotGlyphs(std::vector<_YuditGlyphMini>& out)
 
     const SV_GlyphIndex& gi = getGlyphs();
     const SV_INT& pos = getPositions();
-    int prev_x = 0;
+    int pen = 0;
     for (unsigned int i = 0; i < gi.size(); i++) {
         _YuditGlyphMini g;
         g.glyph_id  = gi[i];
         g.codepoint = 0;
+
+        /* gwidth() is negative for glyphs with a negative left side bearing;
+         * the reported advance is its magnitude (see the final glyph build in
+         * yudit_shaper.cpp). */
+        int w = m_font_proxy ? m_font_proxy->gwidth(gi[i]) : 0;
+        g.width = (w < 0) ? -w : w;
+
         if (i < (unsigned int)pos.size()) {
             int32_t xy = pos[i];
-            int abs_x = (int16_t)(xy & 0xffff);
+            int abs_x  = (int16_t)(xy & 0xffff);
             int mark_y = (int16_t)((xy >> 16) & 0xffff);
-            g.x = abs_x - prev_x;  /* relative dx */
-            g.y = mark_y;           /* mark-to-base dy */
-            prev_x = abs_x;
+            g.x = abs_x - pen;  /* offset from the pen position */
+            g.y = mark_y;       /* mark-to-base offset */
         } else {
             g.x = 0;
             g.y = 0;
         }
-        g.width   = m_font_proxy ? m_font_proxy->gwidth(gi[i]) : 0;
         g.cluster = (int32_t)i;
+        pen += g.width;
         out.push_back(g);
     }
 }
