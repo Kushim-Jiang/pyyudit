@@ -99,6 +99,7 @@ set(SWINDOW_SRCS
 set(WRAPPER_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/native/src/yudit_shaper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/native/src/YuditScriptProcessor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/src/YuditParagraphShaper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/native/src/yudit_trace.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/native/src/yudit_gui_stubs.cpp
 )
