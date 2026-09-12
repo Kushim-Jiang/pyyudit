@@ -147,3 +147,48 @@ for i in range(max_g):
         else "!!"
     )
     print(f"  [{i:2d}]  {hb_s}  {yt_s}  {match}")
+
+# ── Reported field semantics ──────────────────────────────────────────────
+#
+# The reported fields use the reference format's model: dx/dy are offsets from
+# the pen position and ax is the advance, so `pen += ax` then `draw at pen + dx`
+# reproduces the layout.  These checks guard that contract.
+print()
+print("-" * 60)
+print("Field semantics:")
+print("-" * 60)
+
+negative = [(i, g.g, g.ax) for i, g in enumerate(result.final_glyphs) if g.ax < 0]
+advance_sum = sum(g.ax for g in result.final_glyphs)
+
+print(f"  all advances >= 0    : {'YES' if not negative else f'NO {negative}'}")
+print(
+    f"  sum(ax) == advance_x : {advance_sum} vs {result.advance_x}"
+    f"  {'YES' if advance_sum == result.advance_x else 'NO'}"
+)
+
+pen = 0
+yt_positions = []
+for _g in result.final_glyphs:
+    yt_positions.append(pen + _g.dx)
+    pen += _g.ax
+
+hb_pen = 0
+hb_positions = []
+for _g in hb_glyphs:
+    hb_positions.append(hb_pen + _g["dx"])
+    hb_pen += _g["ax"]
+
+print(f"  positions (pen + dx) : pyyudit = {yt_positions}")
+print(f"                         harfbuzz = {hb_positions}")
+
+same_glyphs = [g["g"] for g in hb_glyphs] == [g.g for g in result.final_glyphs]
+fields_match = [(g["ax"], g["dx"], g["dy"]) for g in hb_glyphs] == [(g.ax, g.dx, g.dy) for g in result.final_glyphs]
+print(f"  same glyph sequence  : {same_glyphs}")
+note = ""
+if not same_glyphs:
+    note = "   (a font carrying both Indic editions can differ:" " HarfBuzz prefers the 2nd-edition tags)"
+print(f"  ax/dx/dy == harfbuzz : {fields_match}{note}")
+
+if negative or advance_sum != result.advance_x:
+    raise SystemExit("reported glyph fields are inconsistent")
