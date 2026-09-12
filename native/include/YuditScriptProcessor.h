@@ -34,12 +34,16 @@ struct _YuditGlyphMini {
 
 /**
  * A single per-lookup trace event collected during shaping.
+ *
+ * One lookup contributes up to three events, in this order:
+ *   START (always), SKIPPED (only when nothing matched), END (always).
  */
 struct LookupEvent {
+    YuditTraceEvent event;   /* START / SKIPPED / END */
     const char* table;       /* "GSUB" or "GPOS" */
     unsigned int lookup_idx;
     char feature[5];         /* 4-char feature tag, null-terminated */
-    int matched;             /* 1 if lookup produced a result */
+    int matched;             /* END only: 1 if the lookup produced a result */
 };
 
 /**
@@ -63,7 +67,6 @@ public:
     using SScriptProcessor::gsubclean;
     using SScriptProcessor::gposInit;
     using SScriptProcessor::gpos;
-    using SScriptProcessor::gposFinal;
 
     /* Expose protected data */
     using SScriptProcessor::m_in;
@@ -76,10 +79,25 @@ public:
     using SScriptProcessor::m_script;
     using SScriptProcessor::m_otfScript;
     using SScriptProcessor::m_reorder_guide;
+    using SScriptProcessor::m_xpos;
+    using SScriptProcessor::m_ypos;
+    using SScriptProcessor::m_pos_base_index;
+    using SScriptProcessor::m_font;
 
     YuditScriptProcessor(SFontLookup* font) : SScriptProcessor(font), m_font_proxy(font) {}
 
     void applyWithTrace(std::vector<TraceStageInfo>& stages);
+
+    /**
+     * Finalize positioning.
+     *
+     * Shadows SScriptProcessor::gposFinal(), which uses the raw (possibly
+     * negative) glyph width when checking whether a positioned glyph extends
+     * the line.  Yudit reports a negative width for glyphs with a negative
+     * left side bearing - Arial's "A", for instance - and those then fail to
+     * advance the cursor, misplacing every following glyph.
+     */
+    void gposFinal();
 
 private:
     SFontLookup* m_font_proxy;

@@ -30,23 +30,22 @@ onTraceEventGlobal(
     TraceCollector* col = (TraceCollector*)user_data;
     if (!col) return;
 
-    if (event == YUDIT_TRACE_LOOKUP_END) {
-        LookupEvent ev;
-        ev.table       = table;
-        ev.lookup_idx  = lookup_idx;
-        /* Copy feature tag bytes (may not be null-terminated) */
-        if (feature) {
-            ev.feature[0] = feature[0];
-            ev.feature[1] = feature[1];
-            ev.feature[2] = feature[2];
-            ev.feature[3] = feature[3];
-            ev.feature[4] = '\0';
-        } else {
-            ev.feature[0] = '\0';
-        }
-        ev.matched     = matched;
-        col->events.push_back(ev);
+    LookupEvent ev;
+    ev.event      = event;
+    ev.table      = table;
+    ev.lookup_idx = lookup_idx;
+    /* Copy feature tag bytes (may not be null-terminated) */
+    if (feature) {
+        ev.feature[0] = feature[0];
+        ev.feature[1] = feature[1];
+        ev.feature[2] = feature[2];
+        ev.feature[3] = feature[3];
+        ev.feature[4] = '\0';
+    } else {
+        ev.feature[0] = '\0';
     }
+    ev.matched     = matched;
+    col->events.push_back(ev);
 }
 
 /* ── Snapshot helper ────────────────────────────────────────────────────── */
@@ -55,6 +54,23 @@ void
 YuditScriptProcessor::snapshotGlyphs(std::vector<_YuditGlyphMini>& out)
 {
     out.clear();
+
+    /* Before gindex() runs, m_out is empty: the buffer still holds the
+     * (decomposed, reordered) codepoints in m_in.  Report those, with the
+     * codepoint in the glyph field - that is how the reference trace shows a
+     * buffer that has not been mapped to glyphs yet. */
+    if (getGlyphs().size() == 0) {
+        for (unsigned int i = 0; i < m_in.size(); i++) {
+            _YuditGlyphMini g;
+            g.glyph_id  = (uint32_t)m_in[i];
+            g.codepoint = (uint32_t)m_in[i];
+            g.x = g.y = g.width = 0;
+            g.cluster   = (int32_t)i;
+            out.push_back(g);
+        }
+        return;
+    }
+
     const SV_GlyphIndex& gi = getGlyphs();
     const SV_INT& pos = getPositions();
     int prev_x = 0;
@@ -79,11 +95,114 @@ YuditScriptProcessor::snapshotGlyphs(std::vector<_YuditGlyphMini>& out)
     }
 }
 
+/* ── Positioning finalization (fixed) ───────────────────────────────────── */
+
+/*
+ * Mirrors SScriptProcessor::gposFinal() with one fix: the base version uses
+ * the raw glyph width when deciding whether a positioned glyph extends the
+ * line.  Yudit reports a *negative* width for glyphs with a negative left
+ * side bearing (Arial's "A", Verdana's "A", Arabic's FE91/FE92, ...), so
+ * `x + w` never exceeds the cursor and the line stops growing - every
+ * following glyph is then placed at the wrong position.  The magnitude is
+ * what matters for the advance.
+ */
+void
+YuditScriptProcessor::gposFinal()
+{
+    m_positions.clear();
+    m_width = 0;
+    if (m_out.size() == 0) return;
+
+    /* store these for the first run */
+    m_positions.append(0);
+    m_xpos.replace(0, 0);
+    m_ypos.replace(0, 0);
+
+    int width = m_font->gwidth(m_out[0]);
+    if (width < 0) width = -width;
+
+    for (unsigned int i = 1; i < m_out.size(); i++) {
+        int x = 0;
+        int y = 0;
+        if (m_xpos[i] != 0 || m_ypos[i] != 0) {
+            /* we have a relative mark-to-base or mark-to-mark position */
+            x = m_xpos[i] + m_xpos[m_pos_base_index[i]];
+            y = m_ypos[i] + m_ypos[m_pos_base_index[i]];
+            /* if it sticks out update our width */
+            int w = m_font->gwidth(m_out[i]);
+            if (w < 0) w = -w;
+            if (x + w > width) width = x + w;
+        } else {
+            int w = m_font->gwidth(m_out[i]);
+            if (w < 0) w = -w;
+            if (w > 0) {
+                x = width;
+                y = 0;
+                width += w;
+            } else {
+                x = width - w;
+                y = 0;
+            }
+        }
+        m_xpos.replace(i, x);
+        m_ypos.replace(i, y);
+        int xy = (y << 16) & 0xffff0000;
+        xy = xy | (x & 0xffff);
+        m_positions.append(xy);
+    }
+    m_width = width;
+}
+
 /* ── Main trace-capturing shaping pipeline ──────────────────────────────── */
 
-void
-YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages)
+/*
+ * Did a GPOS feature change anything?
+ *
+ * SScriptProcessor::gpos() records *relative* offsets in m_xpos/m_ypos; the
+ * packed absolute positions in m_positions are only produced later, by
+ * gposFinal().  Comparing m_positions around a gpos() call therefore always
+ * reports "unchanged" - the offsets are what moves.
+ */
+static bool
+rel_positions_differ(const SV_INT& prev_x, const SV_INT& prev_y,
+                     const SV_INT& cur_x,  const SV_INT& cur_y)
 {
+    if (prev_x.size() != cur_x.size() || prev_y.size() != cur_y.size()) {
+        return true;
+    }
+    for (unsigned int k = 0; k < cur_x.size(); k++) {
+        if (prev_x[k] != cur_x[k]) return true;
+    }
+    for (unsigned int k = 0; k < cur_y.size(); k++) {
+        if (prev_y[k] != cur_y[k]) return true;
+    }
+    return false;
+}
+
+/* Did the glyph buffer change? */
+static bool
+glyph_run_changed(const SV_GlyphIndex& prev, const SV_GlyphIndex& cur)
+{
+    if (prev.size() != cur.size()) return true;
+    for (unsigned int k = 0; k < cur.size(); k++) {
+        if (prev[k] != cur[k]) return true;
+    }
+    return false;
+}
+
+/* Did the codepoint buffer change? */
+static bool
+char_run_changed(const SV_UCS4& prev, const SV_UCS4& cur)
+{
+    if (prev.size() != cur.size()) return true;
+    for (unsigned int k = 0; k < cur.size(); k++) {
+        if (prev[k] != cur[k]) return true;
+    }
+    return false;
+}
+
+void
+YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages){
     stages.clear();
 
     unsigned int i;
@@ -95,7 +214,18 @@ YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages)
     m_out_type.clear();
 
     switch (m_script) {
-    case SC_NONE: break;
+    case SC_NONE:
+        /* No complex-script reordering: plain cmap-driven scripts such as
+         * Latin, Greek, Cyrillic, CJK and symbols.  Yudit defines no feature
+         * set of its own for these, so use the same list it uses for every
+         * other script it does not handle specially (see `default` below).
+         * The OTF script tag is picked by the caller (latn / hani / kana /
+         * hang), so features the font does not carry for that script simply
+         * do not match. */
+        gsub_guide = SStringVector("ccmp,isol,fina,medi,init,rlig,calt");
+        gpos_guide = SStringVector("kern,mark,mkmk");
+        m_in = m_orig;
+        break;
     case SC_DEVANAGARI:
         gsub_guide = SStringVector("nukt,akhn,rphf,blwf,half,vatu,pres,abvs,blws,psts,haln");
         gpos_guide = SStringVector("abvm,blwm,dist");
@@ -115,6 +245,7 @@ YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages)
     case SC_ORIYA:
     case SC_KANNADA:
     case SC_MALAYALAM:
+    case SC_SINHALA:
         gsub_guide = SStringVector("nukt,akhn,rphf,blwf,half,pstf,vatu,pres,blws,abvs,psts,haln");
         gpos_guide = SStringVector("abvm,blwm,dist");
         break;
@@ -143,7 +274,14 @@ YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages)
         gpos_guide = SStringVector("");
         break;
     default:
-    case SC_MAX:
+        /* For unsupported scripts (including Arabic/Hebrew),
+         * try common GSUB/GPOS features. Arabic joining forms
+         * are handled by isol/fina/medi/init features in the font. */
+        gsub_guide = SStringVector("ccmp,isol,fina,medi,init,rlig,calt");
+        gpos_guide = SStringVector("kern,mark,mkmk");
+        /* For unsupported scripts, m_in may not be set by put().
+         * Copy m_orig to m_in so gindex/gsub can work. */
+        m_in = m_orig;
         break;
     }
 
@@ -151,17 +289,19 @@ YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages)
     TraceCollector collector;
 
     /* Step 1: decompose */
+    SV_UCS4 before_chars = m_in;
     decompose();
     stage.msg = "decompose";
-    stage.effective = true;
+    stage.effective = char_run_changed(before_chars, m_in);
     stage.lookups.clear();
     snapshotGlyphs(stage.glyphs);
     stages.push_back(stage);
 
     /* Step 2: reorder */
+    before_chars = m_in;
     reorder();
     stage.msg = "reorder";
-    stage.effective = true;
+    stage.effective = char_run_changed(before_chars, m_in);
     stage.lookups.clear();
     snapshotGlyphs(stage.glyphs);
     stages.push_back(stage);
@@ -186,49 +326,19 @@ YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages)
         yudit_set_trace_callback(onTraceEventGlobal, &collector);
 
         gsub(s.array());
-        /* If no change with current script tag, try "dflt" */
-        bool changed = (m_out.size() != prev_out.size());
-        if (!changed) {
-            for (unsigned int j = 0; j < m_out.size(); j++) {
-                if (j < prev_out.size() && m_out[j] != prev_out[j]) {
-                    changed = true;
-                    break;
-                }
-            }
-        }
 
-        if (!changed && m_script != SC_NONE) {
-            /* Save current script, try dflt */
+        /* No change with this script tag?  Try "dflt" once. */
+        if (!glyph_run_changed(prev_out, m_out) && m_script != SC_NONE) {
             const char* saved = m_otfScript;
             m_otfScript = "dflt";
             gsub(s.array());
             m_otfScript = saved;
-
-            changed = (m_out.size() != prev_out.size());
-            if (!changed) {
-                for (unsigned int j = 0; j < m_out.size(); j++) {
-                    if (j < prev_out.size() && m_out[j] != prev_out[j]) {
-                        changed = true;
-                        break;
-                    }
-                }
-            }
         }
+
         /* Unset trace callback */
         yudit_set_trace_callback(0, 0);
 
-        /* Check if buffer changed (final check after dflt fallback) */
-        if (!changed) {
-            changed = (m_out.size() != prev_out.size());
-            if (!changed) {
-                for (unsigned int j = 0; j < m_out.size(); j++) {
-                    if (j < prev_out.size() && m_out[j] != prev_out[j]) {
-                        changed = true;
-                        break;
-                    }
-                }
-            }
-        }
+        bool changed = glyph_run_changed(prev_out, m_out);
 
         /* Create stage with per-lookup events */
         stage.msg = s.array(); /* e.g. "half" */
@@ -243,16 +353,16 @@ YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages)
     }
 
     /* Step 5: gsubclean */
+    SV_GlyphIndex before_clean = m_out;
     gsubclean();
     stage.msg = "clean";
-    stage.effective = true;
+    stage.effective = glyph_run_changed(before_clean, m_out);
     stage.lookups.clear();
     snapshotGlyphs(stage.glyphs);
     stages.push_back(stage);
 
     /* Step 6: GPOS features �?with per-lookup trace */
     gposInit();
-    SV_INT prev_pos = m_positions;
     for (i = 0; i < gpos_guide.size(); i++) {
         SString s = gpos_guide[i];
         if (s.size() != 4) continue;
@@ -262,30 +372,21 @@ YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages)
         collector.events.clear();
         yudit_set_trace_callback(onTraceEventGlobal, &collector);
 
+        SV_INT prev_x = m_xpos;
+        SV_INT prev_y = m_ypos;
+
         gpos(s.array());
 
         /* Unset trace callback */
         yudit_set_trace_callback(0, 0);
 
-        bool changed = (m_positions.size() != prev_pos.size());
-        if (!changed) {
-            for (unsigned int j = 0; j < m_positions.size(); j++) {
-                if (j < prev_pos.size() && m_positions[j] != prev_pos[j]) {
-                    changed = true;
-                    break;
-                }
-            }
-        }
+        bool changed = rel_positions_differ(prev_x, prev_y, m_xpos, m_ypos);
 
         stage.msg = s.array();
         stage.effective = changed;
         stage.lookups = collector.events;
         snapshotGlyphs(stage.glyphs);
         stages.push_back(stage);
-
-        if (changed) {
-            prev_pos = m_positions;
-        }
     }
 
     /* Step 7: gposFinal */
