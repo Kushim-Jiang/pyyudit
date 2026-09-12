@@ -15,11 +15,11 @@ jobs:
             artifact: yudit_shaper.dll
             lib-name: yudit_shaper.dll
           - os: ubuntu-latest
-            artifact: libyudit_shaper.so
-            lib-name: libyudit_shaper.so
+            artifact: yudit_shaper.so
+            lib-name: yudit_shaper.so
           - os: macos-latest
-            artifact: libyudit_shaper.dylib
-            lib-name: libyudit_shaper.dylib
+            artifact: yudit_shaper.dylib
+            lib-name: yudit_shaper.dylib
 
     runs-on: ${{ matrix.os }}
 

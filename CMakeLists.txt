@@ -159,8 +159,12 @@ if(YUDIT_BUILD_SHARED)
         )
     endif()
     # Link against socket/network libs on Unix for ntohl etc.
-    if(UNIX AND NOT APPLE)
-        target_link_libraries(yudit_shared PRIVATE nsl)
+    # Only link nsl on older Linux systems that still have it
+    if(NOT APPLE)
+        find_library(NSL_LIB nsl)
+        if(NSL_LIB)
+            target_link_libraries(yudit_shared PRIVATE ${NSL_LIB})
+        endif()
     endif()
 endif()
 
