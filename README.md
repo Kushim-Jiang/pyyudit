@@ -73,7 +73,7 @@ pip install -e ".[dev]"
 # Build wheel (includes the native library)
 pip install hatchling build
 python -m build
-pip install dist/pyyudit-0.1.0-py3-none-any.whl
+pip install dist/pyyudit-0.2.0-py3-none-any.whl
 ```
 
 ## Usage

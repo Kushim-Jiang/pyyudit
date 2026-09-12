@@ -2,5 +2,5 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 version_tuple = tuple(int(x) for x in __version__.split("."))
