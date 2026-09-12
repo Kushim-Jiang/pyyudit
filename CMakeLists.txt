@@ -166,6 +166,14 @@ if(YUDIT_BUILD_SHARED)
             target_link_libraries(yudit_shared PRIVATE ${NSL_LIB})
         endif()
     endif()
+
+    # Copy data files (.my) next to the shared library
+    set(DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/native/vendor/yudit/data")
+    add_custom_command(TARGET yudit_shared POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:yudit_shared>/../data"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_DIR}" "$<TARGET_FILE_DIR:yudit_shared>/../data"
+        COMMENT "Copying data files..."
+    )
 endif()
 
 if(YUDIT_BUILD_STATIC)

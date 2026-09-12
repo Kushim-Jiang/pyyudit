@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Generate indic.my — Indic character type map for Yudit's SUniMap.
+
+Yudit's SFontTTF/SScriptProcessor needs runtime data files (.my) to classify
+Unicode codepoints into Indic character types. Without indic.my, the entire
+Indic shaping pipeline is skipped (SCluster.cpp: if (!indic->isOK()) break;).
+
+This script generates the indic.my binary file from Unicode character properties.
+Format: 4-byte UCS4 input → 1-byte SD_INDIC_* output, stored as a compact map.
+"""
+
+from __future__ import annotations
+
+import struct
+import sys
+from pathlib import Path
+
+# SD_INDIC_* constants from SCluster.h
+SD_INDIC_CONSONANT_BASE = 0x00
+SD_INDIC_CONSONANT_BELOW_BASE = 0x01
+SD_INDIC_HALANT = 0x02
+SD_INDIC_INDEP_VOWEL = 0x03
+SD_INDIC_LEFT_VOWEL = 0x04
+SD_INDIC_RIGHT_VOWEL = 0x05
+SD_INDIC_TOP_VOWEL = 0x06
+SD_INDIC_BOTTOM_VOWEL = 0x07
+SD_INDIC_MODIFIER = 0x08
+SD_INDIC_SIGN = 0x09
+SD_INDIC_NUKTA = 0x0A
+SD_INDIC_LEFT_RIGHT_VOWEL = 0x0B
+SD_INDIC_ZWJ = 0x0C
+SD_INDIC_ZWNJ = 0x0D
+
+# Devanagari character classification (U+0900-U+097F)
+# Based on Unicode Standard and Yudit's Indic shaping rules
+DEVANAGARI_MAP = {
+    # Signs
+    0x0900: SD_INDIC_SIGN,  # DEVANAGARI SIGN INVERTED CANDRABINDU
+    0x0901: SD_INDIC_SIGN,  # DEVANAGARI SIGN CANDRABINDU
+    0x0902: SD_INDIC_SIGN,  # DEVANAGARI SIGN ANUSVARA
+    0x0903: SD_INDIC_SIGN,  # DEVANAGARI SIGN VISARGA
+    # Independent vowels
+    0x0904: SD_INDIC_INDEP_VOWEL,  # SHORT A
+    0x0905: SD_INDIC_INDEP_VOWEL,  # A
+    0x0906: SD_INDIC_INDEP_VOWEL,  # AA
+    0x0907: SD_INDIC_INDEP_VOWEL,  # I
+    0x0908: SD_INDIC_INDEP_VOWEL,  # II
+    0x0909: SD_INDIC_INDEP_VOWEL,  # U
+    0x090A: SD_INDIC_INDEP_VOWEL,  # UU
+    0x090B: SD_INDIC_INDEP_VOWEL,  # VOCALIC R
+    0x090C: SD_INDIC_INDEP_VOWEL,  # VOCALIC L
+    0x090D: SD_INDIC_INDEP_VOWEL,  # CANDRA E
+    0x090E: SD_INDIC_INDEP_VOWEL,  # SHORT E
+    0x090F: SD_INDIC_INDEP_VOWEL,  # E
+    0x0910: SD_INDIC_INDEP_VOWEL,  # AI
+    0x0911: SD_INDIC_INDEP_VOWEL,  # CANDRA O
+    0x0912: SD_INDIC_INDEP_VOWEL,  # SHORT O
+    0x0913: SD_INDIC_INDEP_VOWEL,  # O
+    0x0914: SD_INDIC_INDEP_VOWEL,  # AU
+    # Consonants
+    0x0915: SD_INDIC_CONSONANT_BASE,  # KA
+    0x0916: SD_INDIC_CONSONANT_BASE,  # KHA
+    0x0917: SD_INDIC_CONSONANT_BASE,  # GA
+    0x0918: SD_INDIC_CONSONANT_BASE,  # GHA
+    0x0919: SD_INDIC_CONSONANT_BASE,  # NGA
+    0x091A: SD_INDIC_CONSONANT_BASE,  # CA
+    0x091B: SD_INDIC_CONSONANT_BASE,  # CHA
+    0x091C: SD_INDIC_CONSONANT_BASE,  # JA
+    0x091D: SD_INDIC_CONSONANT_BASE,  # JHA
+    0x091E: SD_INDIC_CONSONANT_BASE,  # NYA
+    0x091F: SD_INDIC_CONSONANT_BASE,  # TTA
+    0x0920: SD_INDIC_CONSONANT_BASE,  # TTHA
+    0x0921: SD_INDIC_CONSONANT_BASE,  # DDA
+    0x0922: SD_INDIC_CONSONANT_BASE,  # DDHA
+    0x0923: SD_INDIC_CONSONANT_BASE,  # NNA
+    0x0924: SD_INDIC_CONSONANT_BASE,  # TA
+    0x0925: SD_INDIC_CONSONANT_BASE,  # THA
+    0x0926: SD_INDIC_CONSONANT_BASE,  # DA
+    0x0927: SD_INDIC_CONSONANT_BASE,  # DHA
+    0x0928: SD_INDIC_CONSONANT_BASE,  # NA
+    0x0929: SD_INDIC_CONSONANT_BASE,  # NNNA
+    0x092A: SD_INDIC_CONSONANT_BASE,  # PA
+    0x092B: SD_INDIC_CONSONANT_BASE,  # PHA
+    0x092C: SD_INDIC_CONSONANT_BASE,  # BA
+    0x092D: SD_INDIC_CONSONANT_BASE,  # BHA
+    0x092E: SD_INDIC_CONSONANT_BASE,  # MA
+    0x092F: SD_INDIC_CONSONANT_BASE,  # YA
+    0x0930: SD_INDIC_CONSONANT_BASE,  # RA
+    0x0931: SD_INDIC_CONSONANT_BASE,  # RRA
+    0x0932: SD_INDIC_CONSONANT_BASE,  # LA
+    0x0933: SD_INDIC_CONSONANT_BASE,  # LLA
+    0x0934: SD_INDIC_CONSONANT_BASE,  # LLLA
+    0x0935: SD_INDIC_CONSONANT_BASE,  # VA
+    0x0936: SD_INDIC_CONSONANT_BASE,  # SHA
+    0x0937: SD_INDIC_CONSONANT_BASE,  # SSA
+    0x0938: SD_INDIC_CONSONANT_BASE,  # SA
+    0x0939: SD_INDIC_CONSONANT_BASE,  # HA
+    # Nukta
+    0x093C: SD_INDIC_NUKTA,  # DEVANAGARI SIGN NUKTA
+    # Virama / Halant
+    0x094D: SD_INDIC_HALANT,  # DEVANAGARI SIGN VIRAMA
+    # Dependent vowel signs
+    0x093E: SD_INDIC_RIGHT_VOWEL,  # AA
+    0x093F: SD_INDIC_LEFT_VOWEL,  # I
+    0x0940: SD_INDIC_RIGHT_VOWEL,  # II
+    0x0941: SD_INDIC_BOTTOM_VOWEL,  # U
+    0x0942: SD_INDIC_BOTTOM_VOWEL,  # UU
+    0x0943: SD_INDIC_BOTTOM_VOWEL,  # VOCALIC R
+    0x0944: SD_INDIC_BOTTOM_VOWEL,  # VOCALIC RR
+    0x0945: SD_INDIC_BOTTOM_VOWEL,  # CANDRA E
+    0x0946: SD_INDIC_BOTTOM_VOWEL,  # SHORT E
+    0x0947: SD_INDIC_BOTTOM_VOWEL,  # E
+    0x0948: SD_INDIC_BOTTOM_VOWEL,  # AI
+    0x0949: SD_INDIC_TOP_VOWEL,  # CANDRA O
+    0x094A: SD_INDIC_TOP_VOWEL,  # SHORT O
+    0x094B: SD_INDIC_TOP_VOWEL,  # O
+    0x094C: SD_INDIC_TOP_VOWEL,  # AU
+    # Virama form
+    0x094D: SD_INDIC_HALANT,
+    # Sign
+    0x094E: SD_INDIC_SIGN,  # DEVANAGARI SIGN ANUSVARA ABOVE BINDU
+    0x094F: SD_INDIC_SIGN,  # DEVANAGARI SIGN AVAGRAHA
+    # Dependent vowel signs (continued)
+    0x0950: SD_INDIC_SIGN,  # DEVANAGARI OM
+    0x0951: SD_INDIC_MODIFIER,  # DEVANAGARI STRESS UDATTA
+    0x0952: SD_INDIC_MODIFIER,  # DEVANAGARI STRESS ANUDATTA
+    0x0953: SD_INDIC_SIGN,  # DEVANAGARI GRAVE ACCENT
+    0x0954: SD_INDIC_SIGN,  # DEVANAGARI ACUTE ACCENT
+    0x0955: SD_INDIC_MODIFIER,  # DEVANAGARI CANDRA LONG VOWEL
+    0x0956: SD_INDIC_BOTTOM_VOWEL,  # DEVANAGARI VOWEL SIGN UE
+    0x0957: SD_INDIC_BOTTOM_VOWEL,  # DEVANAGARI VOWEL SIGN UUE
+    # Consonant with nukta
+    0x0958: SD_INDIC_CONSONANT_BASE,  # QA
+    0x0959: SD_INDIC_CONSONANT_BASE,  # KHHA
+    0x095A: SD_INDIC_CONSONANT_BASE,  # GGA
+    0x095B: SD_INDIC_CONSONANT_BASE,  # ZA
+    0x095C: SD_INDIC_CONSONANT_BASE,  # DDA
+    0x095D: SD_INDIC_CONSONANT_BASE,  # DDHA
+    0x095E: SD_INDIC_CONSONANT_BASE,  # FA
+    0x095F: SD_INDIC_CONSONANT_BASE,  # YYA
+    # Dependent vowel signs (continued)
+    0x0960: SD_INDIC_INDEP_VOWEL,  # VOCALIC RR
+    0x0961: SD_INDIC_INDEP_VOWEL,  # VOCALIC LL
+    0x0962: SD_INDIC_BOTTOM_VOWEL,  # VOWEL SIGN VOCALIC L
+    0x0963: SD_INDIC_BOTTOM_VOWEL,  # VOWEL SIGN VOCALIC LL
+    # Dandas
+    0x0964: SD_INDIC_SIGN,  # DEVANAGARI DANDA
+    0x0965: SD_INDIC_SIGN,  # DEVANAGARI DOUBLE DANDA
+    # Digits
+    0x0966: 0x10,  # DIGIT ZERO
+    0x0967: 0x10,  # DIGIT ONE
+    0x0968: 0x10,  # DIGIT TWO
+    0x0969: 0x10,  # DIGIT THREE
+    0x096A: 0x10,  # DIGIT FOUR
+    0x096B: 0x10,  # DIGIT FIVE
+    0x096C: 0x10,  # DIGIT SIX
+    0x096D: 0x10,  # DIGIT SEVEN
+    0x096E: 0x10,  # DIGIT EIGHT
+    0x096F: 0x10,  # DIGIT NINE
+    # Sign
+    0x0970: SD_INDIC_SIGN,  # DEVANAGARI ABBREVIATION SIGN
+    0x0971: SD_INDIC_MODIFIER,  # DEVANAGARI SIGN HIGH SPACING DOT
+    # More consonants with nukta
+    0x0972: SD_INDIC_INDEP_VOWEL,  # CANDRA A
+    0x0973: SD_INDIC_INDEP_VOWEL,  # O
+    0x0974: SD_INDIC_INDEP_VOWEL,  # UU
+    0x0975: SD_INDIC_INDEP_VOWEL,  # E
+    0x0976: SD_INDIC_INDEP_VOWEL,  # OE
+    0x0977: SD_INDIC_INDEP_VOWEL,  # AU
+    # Signs
+    0x0978: SD_INDIC_SIGN,
+    0x0979: SD_INDIC_SIGN,
+    0x097A: SD_INDIC_SIGN,
+    0x097B: SD_INDIC_CONSONANT_BASE,
+    0x097C: SD_INDIC_CONSONANT_BASE,
+    0x097D: SD_INDIC_SIGN,
+    0x097E: SD_INDIC_CONSONANT_BASE,
+    0x097F: SD_INDIC_CONSONANT_BASE,
+    # ZWJ / ZWNJ
+    0x200C: SD_INDIC_ZWNJ,
+    0x200D: SD_INDIC_ZWJ,
+}
+
+
+def write_map(path: Path, mapping: dict[int, int]) -> None:
+    """Write a Yudit .my binary map file.
+
+    Format: sorted (input, output) pairs as 4-byte UCS4 + 1-byte value.
+    """
+    with open(path, "wb") as f:
+        for cp in sorted(mapping.keys()):
+            f.write(struct.pack(">IB", cp, mapping[cp]))
+
+
+def main() -> None:
+    out_dir = Path(__file__).parent.parent / "native" / "vendor" / "yudit" / "data"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    indic_path = out_dir / "indic.my"
+    write_map(indic_path, DEVANAGARI_MAP)
+    print(f"Written {indic_path} ({indic_path.stat().st_size} bytes, {len(DEVANAGARI_MAP)} entries)")
+
+
+if __name__ == "__main__":
+    main()

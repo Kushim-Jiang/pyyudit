@@ -54,8 +54,8 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyyudit"]
-# Bundle the compiled native library (DLL/SO/dylib) into the wheel.
-force-include = { "src/pyyudit/_lib" = "pyyudit/_lib" }
+# Bundle the compiled native library (DLL/SO/dylib) and data files into the wheel.
+force-include = { "src/pyyudit/_lib" = "pyyudit/_lib", "native/vendor/yudit/data" = "pyyudit/_lib/data" }
 
 [tool.hatch.build.targets.sdist]
 include = [

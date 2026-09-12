@@ -44,6 +44,7 @@
 #define SGETTEMP _mktemp
 #else
 #include <unistd.h>
+#include <dlfcn.h>
 #define SGETTEMP mktemp
 #endif
 
@@ -64,6 +65,53 @@ yudit_error_string(YuditError err) {
         case YUDIT_ERR_UNSUPPORTED: return "unsupported script";
         default:                    return "unknown error";
     }
+}
+
+/* ── Static initialization: set up Yudit data paths ─────────────────────── */
+
+static bool g_initialized = false;
+
+static void ensure_initialized() {
+    if (g_initialized) return;
+    g_initialized = true;
+
+    /* Tell SUniMap where to find .my data files.
+     * We bundle indic.my next to the shared library. */
+#ifdef USE_WINAPI
+    /* On Windows, get the directory of this DLL */
+    char dll_path[MAX_PATH];
+    HMODULE hMod;
+    if (GetModuleHandleExA(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCSTR)&ensure_initialized, &hMod)) {
+        GetModuleFileNameA(hMod, dll_path, MAX_PATH);
+        /* Strip filename to get directory */
+        char* last_slash = strrchr(dll_path, '\\');
+        if (last_slash) *last_slash = '\0';
+    } else {
+        dll_path[0] = '\0';
+    }
+    std::string data_dir = std::string(dll_path) + "\\data";
+#else
+    /* On Linux/macOS, use the library's directory */
+    Dl_info info;
+    std::string data_dir;
+    if (dladdr((void*)&ensure_initialized, &info) && info.dli_fname) {
+        std::string lib_path = info.dli_fname;
+        size_t last_slash = lib_path.find_last_of('/');
+        if (last_slash != std::string::npos) {
+            data_dir = lib_path.substr(0, last_slash) + "/../data";
+        }
+    }
+#endif
+
+    /* Set the search path for SUniMap */
+    SStringVector path;
+    path.append(data_dir.c_str());
+    /* Also try the current directory */
+    path.append(".");
+    SUniMap::setPath(path);
 }
 
 /* ── Internal structures ────────────────────────────────────────────────── */
@@ -106,6 +154,8 @@ extern "C" YuditError
 yudit_font_open(const uint8_t* data, size_t size,
                 int face_index, YuditFont** out)
 {
+    ensure_initialized();
+
     if (!data || size < 12 || !out) return YUDIT_ERR_BAD_FONT;
 
     *out = 0;
