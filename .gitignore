@@ -1,0 +1,36 @@
+temp/
+downloads/
+yudit-3.1.0/
+
+# Build
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+.venv/
+.venv*/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Native build artifacts
+*.dll
+*.so
+*.dylib
+*.o
+*.obj

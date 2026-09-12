@@ -1,0 +1,102 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyyudit"
+version = "0.1.0"
+description = "Cross-platform Python binding to Yudit's Unicode shaping engine with per-lookup trace"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "GPL-2.0-or-later"
+authors = [{ name = "Kushim-Jiang" }]
+keywords = [
+    "yudit",
+    "shaping",
+    "unicode",
+    "indic",
+    "arabic",
+    "opentype",
+    "text",
+    "fonts",
+    "trace",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: C++",
+    "Topic :: Text Processing :: Fonts",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/Kushim-Jiang/pyyudit"
+Documentation = "https://github.com/Kushim-Jiang/pyyudit#readme"
+Issues = "https://github.com/Kushim-Jiang/pyyudit/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11,<2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyyudit"]
+# Bundle the compiled native library (DLL/SO/dylib) into the wheel.
+force-include = { "src/pyyudit/_lib" = "pyyudit/_lib" }
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/native",
+    "/tests",
+    "/examples",
+    "/scripts",
+    "/CMakeLists.txt",
+    "/README.md",
+    "/LICENSE",
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["src", "tests"]
+exclude = [".venv", "target", "dist", "build"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+pythonVersion = "3.9"
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+analysis.stubPath = []
+reportMissingImports = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "native: requires the compiled yudit native library (auto-skipped when absent)",
+    "golden: requires specific test fonts (auto-skipped when absent)",
+]

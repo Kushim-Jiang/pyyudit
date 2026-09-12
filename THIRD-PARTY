@@ -1,0 +1,22 @@
+Third-Party Software Notice
+==========================
+
+pyyudit includes code from the following third-party projects:
+
+Yudit Unicode Editor
+--------------------
+- Source: https://www.yudit.org/
+- Version: 3.1.0
+- License: GNU General Public License v2 or later (GPL-2.0-or-later)
+- Copyright: (C) 1997-2023 Gaspar Sinai <gaspar@yudit.org>
+- Location in this project: native/vendor/yudit/
+- Files: stoolkit/ (core data structures, BiDi, Unicode, encoding backends),
+         swindow/ (font handling, script processor, OpenType GSUB/GPOS),
+         svgicon/ (SVGBase header)
+
+The Yudit source code has been modified for headless operation:
+- GUI/X11 dependencies removed (replaced with stubs in yudit_gui_stubs.cpp)
+- Per-lookup trace callbacks added (yudit_trace.h/cpp, SFontOTF_patched.cpp)
+- C API wrapper added (yudit_shaper.h/cpp)
+
+The full text of the GPL-2.0 license is in the LICENSE file.

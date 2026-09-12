@@ -1,0 +1,13 @@
+include LICENSE
+include README.md
+include THIRD-PARTY
+include CMakeLists.txt
+
+recursive-include native/include *.h
+recursive-include native/src *.cpp
+recursive-include native/vendor *.cpp *.h *.i
+recursive-include src/pyyudit *.py *.pyi py.typed
+recursive-include src/pyyudit/_lib *.dll *.so *.dylib
+recursive-include tests *.py
+recursive-include examples *.py
+recursive-include scripts *.py
