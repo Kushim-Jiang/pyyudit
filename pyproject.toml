@@ -54,8 +54,17 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyyudit"]
-# Bundle the compiled native library (DLL/SO/dylib) and data files into the wheel.
-force-include = { "src/pyyudit/_lib" = "pyyudit/_lib", "native/vendor/yudit/data" = "pyyudit/_lib/data" }
+# src/pyyudit/_lib/data/ is ignored by git, so `packages` does not ship it: the
+# data has to be mapped in from the vendor tree, which is what the native build
+# copies too.  The compiled library is platform specific, so it is picked up by
+# glob instead of being mapped (mapping the whole _lib directory would put the
+# data files in the wheel a second time, which hatchling rejects).
+force-include = { "native/vendor/yudit/data" = "pyyudit/_lib/data" }
+artifacts = [
+    "src/pyyudit/_lib/*.dll",
+    "src/pyyudit/_lib/*.so",
+    "src/pyyudit/_lib/*.dylib",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
