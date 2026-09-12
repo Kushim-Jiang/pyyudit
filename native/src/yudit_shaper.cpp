@@ -430,6 +430,7 @@ yudit_shape(const YuditFont* font,
     /* Build final result glyphs */
     result->width = total_width;
     result->glyphs.reserve(all_glyphs.size());
+    int prev_x = 0;
     for (unsigned int i = 0; i < all_glyphs.size(); i++) {
         YuditGlyph g;
         g.glyph_id  = all_glyphs[i];
@@ -437,8 +438,11 @@ yudit_shape(const YuditFont* font,
 
         if (i < all_positions.size()) {
             int32_t xy = all_positions[i];
-            g.x = (int16_t)(xy & 0xffff);
-            g.y = (int16_t)((xy >> 16) & 0xffff);
+            int abs_x = (int16_t)(xy & 0xffff);
+            int mark_y = (int16_t)((xy >> 16) & 0xffff);
+            g.x = abs_x - prev_x;  /* relative dx */
+            g.y = mark_y;           /* mark-to-base dy */
+            prev_x = abs_x;
         } else {
             g.x = 0;
             g.y = 0;

@@ -57,14 +57,18 @@ YuditScriptProcessor::snapshotGlyphs(std::vector<_YuditGlyphMini>& out)
     out.clear();
     const SV_GlyphIndex& gi = getGlyphs();
     const SV_INT& pos = getPositions();
+    int prev_x = 0;
     for (unsigned int i = 0; i < gi.size(); i++) {
         _YuditGlyphMini g;
         g.glyph_id  = gi[i];
         g.codepoint = 0;
         if (i < (unsigned int)pos.size()) {
             int32_t xy = pos[i];
-            g.x = (int16_t)(xy & 0xffff);
-            g.y = (int16_t)((xy >> 16) & 0xffff);
+            int abs_x = (int16_t)(xy & 0xffff);
+            int mark_y = (int16_t)((xy >> 16) & 0xffff);
+            g.x = abs_x - prev_x;  /* relative dx */
+            g.y = mark_y;           /* mark-to-base dy */
+            prev_x = abs_x;
         } else {
             g.x = 0;
             g.y = 0;
@@ -182,17 +186,46 @@ YuditScriptProcessor::applyWithTrace(std::vector<TraceStageInfo>& stages)
         yudit_set_trace_callback(onTraceEventGlobal, &collector);
 
         gsub(s.array());
-
-        /* Unset trace callback */
-        yudit_set_trace_callback(0, 0);
-
-        /* Check if buffer changed */
+        /* If no change with current script tag, try "dflt" */
         bool changed = (m_out.size() != prev_out.size());
         if (!changed) {
             for (unsigned int j = 0; j < m_out.size(); j++) {
                 if (j < prev_out.size() && m_out[j] != prev_out[j]) {
                     changed = true;
                     break;
+                }
+            }
+        }
+
+        if (!changed && m_script != SC_NONE) {
+            /* Save current script, try dflt */
+            const char* saved = m_otfScript;
+            m_otfScript = "dflt";
+            gsub(s.array());
+            m_otfScript = saved;
+
+            changed = (m_out.size() != prev_out.size());
+            if (!changed) {
+                for (unsigned int j = 0; j < m_out.size(); j++) {
+                    if (j < prev_out.size() && m_out[j] != prev_out[j]) {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        /* Unset trace callback */
+        yudit_set_trace_callback(0, 0);
+
+        /* Check if buffer changed (final check after dflt fallback) */
+        if (!changed) {
+            changed = (m_out.size() != prev_out.size());
+            if (!changed) {
+                for (unsigned int j = 0; j < m_out.size(); j++) {
+                    if (j < prev_out.size() && m_out[j] != prev_out[j]) {
+                        changed = true;
+                        break;
+                    }
                 }
             }
         }
