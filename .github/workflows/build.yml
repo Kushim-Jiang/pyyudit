@@ -47,7 +47,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -DYUDIT_BUILD_SHARED=ON
+          cmake -S . -B build -DYUDIT_BUILD_SHARED=ON
           cmake --build build --config Release
 
       - name: Find & copy native library
@@ -56,14 +56,17 @@ jobs:
           mkdir -p src/pyyudit/_lib
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp build/bin/Release/${{ matrix.artifact }} src/pyyudit/_lib/
-          elif [ "${{ runner.os }}" = "macOS" ]; then
-            cp build/lib${{ matrix.artifact }} src/pyyudit/_lib/ || \
-            cp build/${{ matrix.artifact }} src/pyyudit/_lib/ || \
-            find build -name "*.dylib" -exec cp {} src/pyyudit/_lib/ \;
           else
-            cp build/lib${{ matrix.artifact }} src/pyyudit/_lib/ || \
-            find build -name "*.so*" -not -name "*.so.*" -exec cp {} src/pyyudit/_lib/ \;
+            # Try common CMake output locations
+            found=$(find build -name "${{ matrix.artifact }}" -not -name "*.a" | head -1)
+            if [ -z "$found" ]; then
+              echo "ERROR: ${{ matrix.artifact }} not found in build/"
+              find build -name "*.so*" -o -name "*.dylib" | head -20
+              exit 1
+            fi
+            cp "$found" src/pyyudit/_lib/
           fi
+          echo "Bundled library:"
           ls -la src/pyyudit/_lib/
 
       - name: Build wheel

@@ -12,8 +12,9 @@
 #ifndef YUDIT_SCRIPT_PROCESSOR_H
 #define YUDIT_SCRIPT_PROCESSOR_H
 
-#include <vector>
+#include <cstdint>
 #include <string>
+#include <vector>
 #include "swindow/SScriptProcessor.h"
 #include "swindow/SFontLookup.h"
 #include "yudit_trace.h"
