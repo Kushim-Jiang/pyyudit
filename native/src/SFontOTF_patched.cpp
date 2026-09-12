@@ -144,6 +144,54 @@ typedef struct _OTF_LookupList
   SD_USHORT record[1];
 } OTF_LookupList;
 
+/*
+ * OpenType "Extension" lookup subtable (GSUB type 7 / GPOS type 9).
+ * It restates the real lookup type and points at the actual subtable.
+ * Arial, Segoe UI, Noto and most modern fonts wrap *every* lookup this way,
+ * so without unwrapping no GSUB/GPOS lookup ever matches.
+ */
+typedef struct _OTF_LookupExtension
+{
+  SD_USHORT format;              /* 1 */
+  SD_USHORT extensionLookupType; /* real lookup type */
+  SD_ULONG  extensionOffset;     /* 32-bit, from the start of this table */
+} OTF_LookupExtension;
+
+/**
+ * The real lookup type of a lookup, with Extension wrappers unwrapped.
+ */
+static SD_USHORT
+lookupEffectiveType (OTF_Lookup* ltable)
+{
+  SD_USHORT t = ntohs (ltable->type);
+  if (t != 7 && t != 9) return t;   /* not an extension lookup */
+  SD_USHORT offset = ntohs (ltable->subtable[0]);
+  const OTF_LookupExtension* ext =
+     (const OTF_LookupExtension*)((char*)ltable + offset);
+  if (ntohs (ext->format) != 1) return t;
+  return ntohs (ext->extensionLookupType);
+}
+
+/**
+ * Offset of subtable `k` relative to `ltable`, with Extension wrappers
+ * resolved.  Every consumer does `(char*)ltable + offset`, so folding the
+ * 32-bit extension offset in here makes the unwrapping transparent.
+ *
+ * NOTE: the result must be held in a 32-bit variable - extension subtables
+ * routinely live more than 64k away from the lookup that references them.
+ */
+static SD_ULONG
+lookupSubtableOffset (OTF_Lookup* ltable, unsigned int k)
+{
+  SD_ULONG offset = ntohs (ltable->subtable[k]);
+  SD_USHORT t = ntohs (ltable->type);
+  if (t != 7 && t != 9) return offset;   /* not an extension lookup */
+  const OTF_LookupExtension* ext =
+     (const OTF_LookupExtension*)((char*)ltable + offset);
+  if (ntohs (ext->format) != 1) return offset;
+  return offset + ntohl (ext->extensionOffset);
+}
+
 typedef struct _OTF_RangeRecord
 {
   SD_USHORT start;
@@ -795,20 +843,6 @@ SFontTTF::getOTFLigature (const char* _script, const char* _featurelist,
   {
     SD_USHORT fcount = ntohs (lsys->featureCount);
     /* index lookupList through lsys->featureIndex */
-    SD_USHORT lorder = ntohs (lsys->lookupOrder);
-    if (lorder != 0)
-    {
-      static bool warned = false;
-      if (!warned)
-      {
-        fprintf (stderr, 
-          "LanguageSystem lookup order %u not supported",
-          (unsigned int) lorder);
-        fprintf (stderr, " in %*.*s.\n", SSARGS(name));
-        warned = true;
-      }
-      continue;
-    }
     for (unsigned int i=0; i< fcount; i++)
     {
       unsigned int index = ntohs (lsys->featureIndex[i]) ;
@@ -880,7 +914,7 @@ getOTFFeature (OTF_Feature* feat, OTF_LookupList* lookupList,
     SD_USHORT rec = ntohs (feat->record[j]);
     SD_USHORT lrec = ntohs (lookupList->record[rec]);
     OTF_Lookup * ltable = (OTF_Lookup*)((char*)lookupList + lrec); 
-    SD_USHORT type = ntohs (ltable->type);
+    SD_USHORT type = lookupEffectiveType (ltable);
 #if PRINT_UNSUPPORTED
     if (type !=1 && type != 4 && type != 6 && type != 5)
     {
@@ -912,6 +946,10 @@ getOTFFeature (OTF_Feature* feat, OTF_LookupList* lookupList,
     }
 
     /* Trace: emit lookup end (matched if ret > 0) */
+    if (ret == 0)
+    {
+      yudit_trace_emit(YUDIT_TRACE_LOOKUP_SKIPPED, "GSUB", rec, feature_tag, 0);
+    }
     yudit_trace_emit(YUDIT_TRACE_LOOKUP_END, "GSUB", rec, feature_tag, ret > 0);
 
     if (ret) return ret;
@@ -937,7 +975,7 @@ doContextSubstitution (const SString& name,
   SD_USHORT ltcount = ntohs (ltable->count);
   for (unsigned int k=0; k<ltcount; k++)
   {
-    SD_USHORT offset = ntohs (ltable->subtable[k]);
+    SD_ULONG offset = lookupSubtableOffset (ltable, k);
     SD_USHORT *pformat = (SD_USHORT*) ((char*)ltable +  offset);
     SD_USHORT cformat = ntohs (*pformat);
     // Class Based Context Subst.
@@ -1080,7 +1118,7 @@ doChainContextSubstitution (const SString& name,
   SD_USHORT ltcount = ntohs (ltable->count);
   for (unsigned int k=0; k<ltcount; k++)
   {
-    SD_USHORT offset = ntohs (ltable->subtable[k]);
+    SD_ULONG offset = lookupSubtableOffset (ltable, k);
     SD_USHORT *pformat = (SD_USHORT*) ((char*)ltable +  offset);
     SD_USHORT cformat = ntohs (*pformat);
 
@@ -1438,7 +1476,7 @@ doSingleSubstitution (const SString& name, OTF_Lookup* ltable,
   SD_USHORT ltcount = ntohs (ltable->count);
   for (unsigned int k=0; k<ltcount; k++)
   {
-    SD_USHORT offset = ntohs (ltable->subtable[k]);
+    SD_ULONG offset = lookupSubtableOffset (ltable, k);
     OTF_SingleSubstFormat *lformat =  
         (OTF_SingleSubstFormat*) ((char*)ltable +  offset);
 
@@ -1497,7 +1535,7 @@ doAlternateSubstitution (const SString& name, OTF_Lookup* ltable,
   SD_USHORT ltcount = ntohs (ltable->count);
   for (unsigned int k=0; k<ltcount; k++)
   {
-    SD_USHORT offset = ntohs (ltable->subtable[k]);
+    SD_ULONG offset = lookupSubtableOffset (ltable, k);
     OTF_AlternateSubstFormat1 *lformat =  
         (OTF_AlternateSubstFormat1*) ((char*)ltable +  offset);
     SD_USHORT cformat = ntohs (lformat->format);
@@ -1552,7 +1590,7 @@ doLigatureSubstitution (const SString& name, OTF_Lookup* ltable,
   //  if ((flag & 0x0e)!=0)  continue;
   for (unsigned int k=0; k<ltcount; k++)
   {
-    SD_USHORT offset = ntohs (ltable->subtable[k]);
+    SD_ULONG offset = lookupSubtableOffset (ltable, k);
     OTF_LigatureSusbstFormat1 *lformat =  
         (OTF_LigatureSusbstFormat1*) ((char*)ltable +  offset);
     SD_USHORT cformat = ntohs (lformat->format);
@@ -1676,7 +1714,7 @@ glyphClass (char* def, SD_USHORT glyph)
   {
     SD_USHORT startGlyph = htons (f1->startGlyph);
     SD_USHORT glyphCount = htons (f1->glyphCount);
-    if (glyph < startGlyph || glyph+glyphCount >= glyph) return rvle;
+    if (glyph < startGlyph || glyph >= startGlyph + glyphCount) return rvle;
     rvle = htons (f1->classValueArray[glyph-startGlyph]);
     return rvle;
   }
@@ -1734,54 +1772,22 @@ getNextOTFLanguageSystem (const SString fontname, GSUB_HEAD* gsubh,
       OTF_Script* stable = (OTF_Script*) ((char*)scriptList + sl);
       SD_USHORT defaultLangsys = ntohs (stable->defaultLangSys);
       SD_USHORT langSysCount = ntohs (stable->langSysCount);
-      OTF_LangSysRecord* langsysrec = 0;
-      OTF_LangSys *lsys = 0 ;
-      /* attention count includes default */
-      if (defaultLangsys == 0 && langSysCount > 0)
+      OTF_LangSys* lsys = 0;
+
+      /* Use the default language system, falling back to the first record
+       * when a font does not define one.  The deprecated `lookupOrder` field
+       * is deliberately ignored: real fonts - Segoe UI among them - leave it
+       * non-zero, and HarfBuzz ignores it as well.  The previous code also
+       * mis-cast the default LangSys offset to a LangSysRecord and ended up
+       * returning a bogus table. */
+      if (defaultLangsys != 0)
       {
-        langsysrec = &stable->langSysRecord[0];
+        lsys = (OTF_LangSys*) ((char*) stable + defaultLangsys);
       }
-      else if (langSysCount > 0 && defaultLangsys != 0)
+      else if (langSysCount > 0)
       {
-        langsysrec = (OTF_LangSysRecord*) ((char*) stable + defaultLangsys);
-      }
-      /* Locate the langsys table */
-      if (langsysrec)
-      {
-        SString ltag (langsysrec->tag, 4);
-        SD_USHORT lsysoffset = ntohs (langsysrec->offsetFromScript);
-        lsys =  (OTF_LangSys*) ((char*) stable + lsysoffset);
-      } 
-      else  if (defaultLangsys != 0) 
-      {
-        lsys = (OTF_LangSys*) ((char*) stable + defaultLangsys) ;
-      }
-      SD_USHORT lorder = ntohs (lsys->lookupOrder);
-      if (lorder != 0)
-      {
-        static bool fixed = false;
-        /* get a langsys record that works */
-        for (unsigned int sg = 0; sg<langSysCount; sg++)
-        {
-          OTF_LangSysRecord* lr = &stable->langSysRecord[sg];
-          SD_USHORT lsysoffset = ntohs (lr->offsetFromScript);
-          OTF_LangSys* ls =  (OTF_LangSys*) ((char*) stable + lsysoffset);
-          SD_USHORT lorder = ntohs (ls->lookupOrder);
-          if (lorder == 0)
-          {
-            lsys = ls;
-            if (!fixed)
-            { 
-#if PRINT_UNSUPPORTED
-              fprintf (stderr, 
-               "Fixed broken default langsys table in  %*.*s. (%4.4s %u/%u)\n", 
-                SSARGS(fontname), lr->tag, (unsigned int) sg, 
-                (unsigned int) langSysCount);
-#endif
-            }
-          }
-          fixed = true;
-        }
+        OTF_LangSysRecord* lr = &stable->langSysRecord[0];
+        lsys = (OTF_LangSys*) ((char*) stable + ntohs (lr->offsetFromScript));
       }
       *from = i+1;
       return lsys;
@@ -2622,22 +2628,6 @@ SFontTTF::getPositions(int feature, const SS_GlyphIndex* gv,
   {
     SD_USHORT fcount = ntohs (lsys->featureCount);
     /* index lookupList through lsys->featureIndex */
-    SD_USHORT lorder = ntohs (lsys->lookupOrder);
-    if (lorder != 0)
-    {
-      static bool warned = false;
-      if (!warned)
-      {
-#if PRINT_UNSUPPORTED
-        fprintf (stderr, 
-          "LanguageSystem lookup order %u not supported",
-          (unsigned int) lorder);
-        fprintf (stderr, " in %*.*s.\n", SSARGS(name));
-#endif
-        warned = true;
-      }
-      continue;
-    }
     for (unsigned int i=0; i< fcount; i++)
     {
       unsigned int index = ntohs (lsys->featureIndex[i]) ;
@@ -2692,7 +2682,7 @@ processGPOSFeature (const SString& name, OTF_Feature* feat,
     SD_USHORT rec = ntohs (feat->record[j]);
     SD_USHORT lrec = ntohs (lookupList->record[rec]);
     OTF_Lookup * ltable = (OTF_Lookup*)((char*)lookupList + lrec); 
-    SD_USHORT type = ntohs (ltable->type);
+    SD_USHORT type = lookupEffectiveType (ltable);
     if (type != substtype)
     {
       if (type != 2 && type != 4 && type != 6 && type != 8)
@@ -2725,6 +2715,10 @@ processGPOSFeature (const SString& name, OTF_Feature* feat,
     }
 
     /* Trace: emit lookup end */
+    if (!ret)
+    {
+      yudit_trace_emit(YUDIT_TRACE_LOOKUP_SKIPPED, "GPOS", rec, feature_tag, 0);
+    }
     yudit_trace_emit(YUDIT_TRACE_LOOKUP_END, "GPOS", rec, feature_tag, ret);
 
     if (ret) return ret;
@@ -2741,7 +2735,7 @@ doChainedPos (const SString& name,
   SD_USHORT ltcount = ntohs (ltable->count);
   for (unsigned int k=0; k<ltcount; k++)
   {
-    SD_USHORT offset = ntohs (ltable->subtable[k]);
+    SD_ULONG offset = lookupSubtableOffset (ltable, k);
     OTF_ChainedAdjustmentFormat1 *lformat1 =  
         (OTF_ChainedAdjustmentFormat1*) ((char*)ltable +  offset);
     /* check what we can */
@@ -2937,6 +2931,12 @@ doChainedPos (const SString& name,
 /*!
  * Do a MarkToBase substitution.
  */
+/*
+ * NOTE: Yudit's GPOS pair adjustment is a stub - it only checks coverage and
+ * returns false - and its legacy 'kern' table support is disabled behind
+ * #if 0 in SFontTTF::gpos.  Both are left exactly as they are: this library
+ * reports what Yudit does, it does not extend the engine.
+ */
 static bool
 doPairAdjustment (const SString& name, OTF_Lookup* ltable, 
   const SS_GlyphIndex* gvarray, unsigned int gvsize,
@@ -2945,7 +2945,7 @@ doPairAdjustment (const SString& name, OTF_Lookup* ltable,
   SD_USHORT ltcount = ntohs (ltable->count);
   for (unsigned int k=0; k<ltcount; k++)
   {
-    SD_USHORT offset = ntohs (ltable->subtable[k]);
+    SD_ULONG offset = lookupSubtableOffset (ltable, k);
     OTF_PairAdjustmentFormat1 *lformat1 =  
         (OTF_PairAdjustmentFormat1*) ((char*)ltable +  offset);
     /* check what we can */
@@ -2993,7 +2993,7 @@ doMarkToBase (const SString& name, OTF_Lookup* ltable,
   SD_USHORT ltcount = ntohs (ltable->count);
   for (unsigned int k=0; k<ltcount; k++)
   {
-    SD_USHORT offset = ntohs (ltable->subtable[k]);
+    SD_ULONG offset = lookupSubtableOffset (ltable, k);
     OTF_MarkBasePosFormat1 *lformat1 =  
         (OTF_MarkBasePosFormat1*) ((char*)ltable +  offset);
     /* check what we can */
@@ -3102,7 +3102,7 @@ doMarkToMark (const SString& name, OTF_Lookup* ltable,
   SD_USHORT ltcount = ntohs (ltable->count);
   for (unsigned int k=0; k<ltcount; k++)
   {
-    SD_USHORT offset = ntohs (ltable->subtable[k]);
+    SD_ULONG offset = lookupSubtableOffset (ltable, k);
     OTF_MarkMarkPosFormat1 *lformat1 =  
         (OTF_MarkMarkPosFormat1*) ((char*)ltable +  offset);
     /* check what we can */
@@ -3373,59 +3373,10 @@ SFontTTF::gpos (const char* script, const char* feature,
     if (*x == 0 && *y == 0) *x = 1;
     return true;
   }
-#if 0
-  if (feature != 0 && strcmp (feature, "kern") == 0)
-  {
-    KERN_HEAD_MS* kh = (KERN_HEAD_MS*) tables["kern"];
-    if (kh)
-    {
-      SD_USHORT version = htons (kh->version);
-      SD_USHORT nTables = htons (kh->nTables);
-      fprintf (stderr, "XXX kerning: version=%u tables=%u\n", version, nTables);
-      char* pt = ((char*)kh  + sizeof(KERN_HEAD_MS));
-      for (unsigned int i=0; i<nTables; i++)
-      {
-        KERN_SUBTABLE_MS* st = (KERN_SUBTABLE_MS*) pt;
-        SD_USHORT sversion = htons (st->version);
-        SD_USHORT slength = htons (st->length);
-        SD_USHORT scoverage = htons (st->coverage);
-        fprintf (stderr, 
-          "XXX kerning: st[%u] sversion=%u slength=%u scoverage=%u\n",
-          i, sversion, slength, scoverage);
-        /* horizontal, type 0 */
-        if ((scoverage & 1) == 1 && (coverage & 0xf0) == 0) 
-        {
-          KERN_HORIZONTAL_MS* ht = (KERN_HORIZONTAL_MS*) 
-            ((char*)pt + sizeof (KERN_SUBTABLE_MS));
-          SD_USHORT nPairs = htons (ht->nPairs);
-          SD_USHORT searchRange = htons (ht->searchRange);
-          SD_USHORT entrySelector = htons (ht->entrySelector);
-          SD_USHORT rangeShift = htons (ht->rangeShift);
-          fprintf (stderr, 
-             "  nPairs=%u searchRange=%u entrySelector=%u rangeShift=%u\n",
-             nPairs, searchRange, entrySelector, rangeShift);
-          KERN_PAIRS_MS* pair = (KERN_PAIRS_MS*) 
-            ((char*)ht+sizeof (KERN_HORIZONTAL_MS));
-          for (unsigned int j=0; j<nPairs; j++)
-          {
-            SD_USHORT left = htons (pair->left);
-            SD_USHORT right = htons (pair->right);
-            SD_USHORT value = htons (pair->right);
-            fprintf (stderr, "  left=%04X right=%04X value=%u\n", 
-                 left, right, value);
-            if (in[0] == left && in[1] == right)
-            {
-              *x = value;
-              return true;
-            }
-            pair = (KERN_PAIRS_MS*) ((char*)pair + sizeof (KERN_PAIRS_MS));
-          }
-        }
-        pt = pt + slength;
-      }
-    }
-  }
-#endif
+  /* NOTE: Yudit does not position glyphs with GPOS type 2 (pair adjustment)
+   * or type 3 (cursive attachment) - doPairAdjustment only inspects coverage
+   * and always returns false, and the legacy 'kern' table code is disabled
+   * behind #if 0.  Nothing is added here, so the trace reports exactly that. */
   return false;
 }
 /*!
