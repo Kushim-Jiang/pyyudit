@@ -60,39 +60,20 @@ for i, stage in enumerate(yt_result.stages):
     eff = "*" if stage.effective else " "
     m = stage.m
     n = len(stage.glyphs)
-    # In yudit, each gsub/gpos feature name IS the lookup
-    if m in (
-        "nukt",
-        "akhn",
-        "rphf",
-        "blwf",
-        "half",
-        "pstf",
-        "vatu",
-        "pres",
-        "abvs",
-        "blws",
-        "psts",
-        "haln",
-        "abvm",
-        "blwm",
-        "dist",
-        "kern",
-        "mark",
-        "mkmk",
-    ):
+    # Same per-lookup messages as HarfBuzz:
+    #   start lookup N feature 'xxxx'
+    #   skipped lookup N feature 'xxxx' because no glyph matches
+    #   end lookup N feature 'xxxx'
+    lookup_info = ""
+    if "lookup" in m:
         yt_lookups.append(m)
-        lookup_info = "  ← GSUB/GPOS feature"
-    elif m == "clean":
-        lookup_info = "  ← post-GSUB cleanup"
-    elif m == "gpos_init":
-        lookup_info = ""
-    elif m == "gpos_final":
-        lookup_info = "  ← final positioning"
-    else:
-        lookup_info = ""
+        if "feature" in m:
+            feat = m.split("feature")[-1].split(" because")[0].strip().strip("'")
+            lookup_info = f"  ← feature '{feat}'"
+    elif m in ("clean", "gpos_final"):
+        lookup_info = "  ← " + ("post-GSUB cleanup" if m == "clean" else "final positioning")
 
-    print(f"  [{i:2d}] {eff} {m:16s} {n:4d} glyphs{lookup_info}")
+    print(f"  [{i:2d}] {eff} {m:56s} {n:4d} glyphs{lookup_info}")
 
 print(f"\n  Total stages: {len(yt_result.stages)}")
 print(f"  Total effective: {sum(1 for s in yt_result.stages if s.effective)}")
