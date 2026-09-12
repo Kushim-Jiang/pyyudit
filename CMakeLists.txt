@@ -140,7 +140,7 @@ if(YUDIT_BUILD_SHARED)
     set_target_properties(yudit_shared PROPERTIES
         OUTPUT_NAME "yudit_shaper"
         PREFIX ""                # no "lib" prefix on Unix
-        VERSION 0.2.0
+        VERSION 0.3.0
         SOVERSION 0
     )
     if(WIN32)
