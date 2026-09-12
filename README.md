@@ -161,9 +161,25 @@ so each lookup is listed once per feature.
 > afterwards, which is how the reference trace reports an unmapped buffer.
 > `cl` is the index into the original text.
 
+Glyph positions use the reference format's own model, so the same layout code
+can consume both this and a HarfBuzz buffer:
+
+```
+pen = 0
+for glyph in run:
+    draw_at(pen + glyph.dx, glyph.dy)     # dx/dy are offsets
+    pen += glyph.ax                       # ax is the advance
+```
+
+`ax` is never negative: Yudit reports a negative width for glyphs with a
+negative left side bearing, as a marker for "align to the end of the previous
+character", and the magnitude is what it advances by.  `dx` is the offset from
+the pen position, not the step from the previous glyph, so an unpositioned
+glyph has `dx == 0` and a mark carries its attachment offset.  The run's
+`advance_x` is the sum of the reported advances.
+
 > In the joining path the glyphs are returned in **visual order** (reversed for
-> RTL runs, like HarfBuzz) and `dx` is the pen delta between consecutive output
-> glyphs, so `pen += dx` reproduces the exact positions.
+> RTL runs, like HarfBuzz), so `pen` accumulates in output order.
 
 `tests/compare_trace.py` lays the trace next to a HarfBuzz trace of the same
 text, so the lookup count, the feature sequence and the resulting buffer can be
@@ -244,6 +260,14 @@ than implemented: the point of the trace is to show what Yudit does.
 - Chained contextual positioning (lookup type 8) is only partially implemented.
 - Hangul jamo are not precomposed: Yudit runs `ljmo`/`vjmo`/`tjmo` and leaves the
   jamo as separate glyphs when the font does not carry those features.
+- Yudit only knows the **first-edition Indic script tags** (`deva`, `beng`, `taml`, …).
+  A font that registers only the second-edition tags (`dev2`, `bng2`, `tml2`, …) —
+  Nirmala UI, for example — has no matching features at all: the run comes back
+  unshaped and the trace shows **zero lookups**. This is reported, not worked
+  around: the second-edition model applies its features in a different order, so
+  driving it with Yudit's first-edition reordering would produce wrong glyphs.
+  Where a font carries both editions the glyphs can still differ from HarfBuzz,
+  which prefers the second-edition tags.
 - Reordering is per run: the base direction is detected with UAX#9 P2/P3 and the run is
   reversed for RTL. Multi-run BiDi is the caller's job, as it is with HarfBuzz.
 - `face_index` on `yudit_font_open` is currently ignored and font collections (TTC) are
