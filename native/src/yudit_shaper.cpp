@@ -50,7 +50,7 @@
 
 /* ── Version ────────────────────────────────────────────────────────────── */
 
-#define PYYUDIT_VERSION "0.1.0"
+#define PYYUDIT_VERSION "0.1.1"
 
 extern "C" const char*
 yudit_version(void) { return PYYUDIT_VERSION; }
